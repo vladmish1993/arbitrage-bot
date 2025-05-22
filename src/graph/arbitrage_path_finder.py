@@ -15,7 +15,7 @@ from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
 from igraph import Graph
 
-from src.graph.bellman_ford import bellman_ford_negative_cycle
+from src.graph.bellman_ford import bellman_ford_negative_cycles
 
 # 定数
 SOL_ADDRESS = "So11111111111111111111111111111111111111112"
@@ -221,17 +221,22 @@ class ArbitragePathFinder:
                 max_cycles, min_profit_threshold * 100)
         
         edges = [(e.source, e.target, e['weight']) for e in self.graph.es]
-        cycle_indices = bellman_ford_negative_cycle(self.graph.vcount(), edges)
+        cycles_idx = bellman_ford_negative_cycles(
+            self.graph.vcount(),
+            edges,
+            max_cycles=max_cycles
+        )
 
         
         try:
             cycles_found = []
-            if cycle_indices:
-                cycle_info = self._analyze_cycle(cycle_indices, min_profit_threshold)
-                if cycle_info:
-                    cycles_found.append(cycle_info)
-                    log.info("Found profitable cycle with %.2f%% profit",
-                            cycle_info["profit_rate"] * 100)
+            if len(cycles_idx) != 0:
+                for idx_list in cycles_idx:
+                    ci = self._analyze_cycle(idx_list, min_profit_threshold)
+                    if ci:
+                        cycles_found.append(ci)
+                        log.info("Found profitable cycle with %.2f%% profit",
+                                ci["profit_rate"] * 100)
             else:
                 log.info("No negative cycles detected")
 

@@ -9,6 +9,7 @@ Raydium API クライアント
     - ベルマン・フォードアルゴリズム用のグラフデータ生成
 """
 
+import copy
 import json
 import logging
 import math
@@ -21,7 +22,7 @@ import httpx
 POOL_URL = "https://api-v3.raydium.io/pools/info/list"
 SOL_ADDRESS = "So11111111111111111111111111111111111111112"  # Wrapped SOL address
 VERIFIED_TOKENS_PATH = "src/data/verified_token_prices.json"
-MIN_TVL_THRESHOLD = 1000.0  # 最小TVL閾値（USD）
+MIN_TVL_THRESHOLD = 5_000.0  # 最小TVL閾値（USD）
 DEFAULT_TIMEOUT = 10.0  # APIタイムアウト（秒）
 
 # ロガー設定
@@ -87,34 +88,9 @@ class RaydiumClient:
                 
         return self._token_prices
 
-    def _get_token_price_in_sol(self, token_address: str) -> float:
-        """
-        トークンのSOL建て価格を取得
-        
-        Parameters
-        ----------
-        token_address : str
-            トークンアドレス
-            
-        Returns
-        -------
-        float
-            SOL建て価格（見つからない場合は0.0）
-        """
-        if token_address == SOL_ADDRESS:
-            return 1.0  # SOL自体は1.0
-            
-        prices = self._load_token_prices()
-        price = prices.get(token_address, 0.0)
-        
-        if price == 0.0:
-            log.warning("Price not found for token: %s", token_address)
-            
-        return price
 
     async def get_raydium_graph(
         self,
-        put_amount: float,
         poolType: str = "standard",
         poolSortField: str = "liquidity",
         sortType: str = "desc",
@@ -126,8 +102,6 @@ class RaydiumClient:
         
         Parameters
         ----------
-        put_amount : float
-            スワップの元手とするSOLの入力量
         poolType : str, default "standard"
             プールの種類
         poolSortField : str, default "liquidity"
@@ -156,11 +130,7 @@ class RaydiumClient:
             APIリクエストが失敗した場合
         httpx.TimeoutException
             リクエストがタイムアウトした場合
-        ValueError
-            put_amountが無効な場合
         """
-        if put_amount <= 0:
-            raise ValueError(f"put_amount must be positive, got: {put_amount}")
             
         params = {
             "poolType": poolType,
@@ -181,7 +151,7 @@ class RaydiumClient:
             pools_data = data.get("data", {}).get("data", [])
             log.info("Raydium: %d pools fetched for graph creation", len(pools_data))
             
-            edges = []
+            edges: List[Tuple[str, str, float, Dict]] = []
             valid_pools = 0
             
             for pool in pools_data:
@@ -192,51 +162,56 @@ class RaydiumClient:
                 valid_pools += 1
                     
                 # トークン情報の抽出
-                token_a = pool.get("mintA", {})
-                token_b = pool.get("mintB", {})
+                token_a = pool["mintA"]
+                token_b = pool["mintB"]
                 
-                token_a_address = token_a.get("address")
-                token_b_address = token_b.get("address")
-                
-                if not token_a_address or not token_b_address:
-                    log.warning("Skipping pool %s: missing token addresses", pool.get("id"))
-                    continue
-                
-                # プール詳細情報の準備（計算用）
-                pool_info = {
-                    "pool_id": pool.get("id"),
-                    "price": pool.get("price"),
-                    "tvl": pool.get("tvl"),
-                    "fee_rate": pool.get("feeRate"),
-                    "liquidity_a": pool.get("mintAmountA"),
-                    "liquidity_b": pool.get("mintAmountB"),
-                    "token_a": {
-                        "address": token_a_address,
-                        "symbol": token_a.get("symbol"),
-                        "decimals": token_a.get("decimals")
-                    },
-                    "token_b": {
-                        "address": token_b_address,
-                        "symbol": token_b.get("symbol"),
-                        "decimals": token_b.get("decimals")
-                    }
+                token_a_addr, token_b_addr = token_a["address"], token_b["address"]
+
+                base_info = {
+                    "pool_id": pool["id"],
+                    "price": pool["price"],
+                    "tvl": pool["tvl"],
+                    "fee_rate": pool["feeRate"],
+                    "liquidity_a": float(pool["mintAmountA"]),
+                    "liquidity_b": float(pool["mintAmountB"]),
                 }
                 
-                # A -> B の方向のエッジ
-                try:
-                    weight_a_to_b = self._calculate_weight(pool_info, "A_TO_B", put_amount)
-                    if not math.isinf(weight_a_to_b):
-                        edges.append((token_a_address, token_b_address, weight_a_to_b, pool_info))
-                except Exception as e:
-                    log.warning("Failed to calculate weight A->B for pool %s: %s", pool.get("id"), e)
-                
-                # B -> A の方向のエッジ
-                try:
-                    weight_b_to_a = self._calculate_weight(pool_info, "B_TO_A", put_amount)
-                    if not math.isinf(weight_b_to_a):
-                        edges.append((token_b_address, token_a_address, weight_b_to_a, pool_info))
-                except Exception as e:
-                    log.warning("Failed to calculate weight B->A for pool %s: %s", pool.get("id"), e)
+                # ---------- A → B 方向 ----------
+                info_ab = copy.deepcopy(base_info)
+                info_ab["token_a"] = {
+                    "address": token_a_addr,
+                    "symbol": token_a.get("symbol"),
+                    "decimals": token_a.get("decimals"),
+                }
+                info_ab["token_b"] = {
+                    "address": token_b_addr,
+                    "symbol": token_b.get("symbol"),
+                    "decimals": token_b.get("decimals"),
+                }
+
+                w_ab = self._calculate_weight(info_ab, "A_TO_B")
+                if math.isfinite(w_ab):
+                    edges.append((token_a_addr, token_b_addr, w_ab, info_ab))
+
+                # ---------- B → A 方向 ----------
+                info_ba = copy.deepcopy(base_info)
+                # token と流動性をスワップ
+                info_ba["token_a"] = {
+                    "address": token_b_addr,
+                    "symbol": token_b.get("symbol"),
+                    "decimals": token_b.get("decimals"),
+                }
+                info_ba["token_b"] = {
+                    "address": token_a_addr,
+                    "symbol": token_a.get("symbol"),
+                    "decimals": token_a.get("decimals"),
+                }
+                info_ba["liquidity_a"], info_ba["liquidity_b"] = \
+                    info_ba["liquidity_b"], info_ba["liquidity_a"]
+
+                w_ba = self._calculate_weight(info_ba, "B_TO_A")
+                if math.isfinite(w_ba):
+                    edges.append((token_b_addr, token_a_addr, w_ba, info_ba))
             
             log.info("Graph created: %d edges from %d valid pools (%d total pools)", 
                     len(edges), valid_pools, len(pools_data))
@@ -285,15 +260,15 @@ class RaydiumClient:
             return False
         
         # 流動性チェック
-        liquidity_a = pool.get("mintAmountA", 0)
-        liquidity_b = pool.get("mintAmountB", 0)
+        liquidity_a = float(pool.get("mintAmountA", 0))
+        liquidity_b = float(pool.get("mintAmountB", 0))
         if liquidity_a <= 0 or liquidity_b <= 0:
             log.debug("Pool %s invalid liquidity: A=%s, B=%s", pool.get("id"), liquidity_a, liquidity_b)
             return False
             
         return True
 
-    def _calculate_weight(self, pool_info: Dict, direction: str, put_amount: float) -> float:
+    def _calculate_weight(self, pool_info: Dict, direction: str) -> float:
         """
         定数積モデルを使用したエッジ重み計算
         
@@ -303,8 +278,6 @@ class RaydiumClient:
             プール情報
         direction : str
             交換方向（"A_TO_B" or "B_TO_A"）
-        put_amount : float
-            SOL建ての投入量
             
         Returns
         -------
@@ -313,71 +286,42 @@ class RaydiumClient:
             
         Notes
         -----
-        定数積モデル（x * y = k）を使用して実効レートを計算:
-        1. SOL建て価格でput_amountを対象トークン量に変換
-        2. 手数料を差し引き
-        3. 定数積制約下での出力量を計算
-        4. 実効レート = 出力量 / 入力量
-        5. 重み = -log(実効レート)
+        spot price (dx→0)を使用して実効レートを計算:
+        1. 手数料を差し引き
+        2. 実効レート = 出力トークンリザーブ / 入力トークンリザーブ
+        3. 重み = -log(実効レート)
         """
-        ra = pool_info.get("liquidity_a", 0)
-        rb = pool_info.get("liquidity_b", 0)
-        fee_rate = pool_info.get("fee_rate", 0)
-        
-        token_a = pool_info.get("token_a", {})
-        token_b = pool_info.get("token_b", {})
-        
-        token_a_address = token_a.get("address")
-        token_b_address = token_b.get("address")
-        
-        # 基本検証
-        if ra <= 0 or rb <= 0 or fee_rate < 0:
-            return float('inf')
-        
-        k = ra * rb  # 定数積
+        ra_raw = pool_info["liquidity_a"]
+        rb_raw = pool_info["liquidity_b"]
+
+        dec_a = pool_info["token_a"]["decimals"]
+        dec_b = pool_info["token_b"]["decimals"]
+
+        try:
+            dec_a = int(dec_a)
+            dec_b = int(dec_b)
+        except (TypeError, ValueError):
+            return float("inf")
+
+        # decimals 補正済みリザーブ
+        ra = ra_raw / (10 ** dec_a)
+        rb = rb_raw / (10 ** dec_b)
+
+        raw_fee = pool_info["fee_rate"]
+        if raw_fee is None:
+            return float("inf")
+        fee = raw_fee / 100 if raw_fee > 1 else raw_fee
         
         try:
             if direction == "A_TO_B":
                 # A -> B: トークンAを投入してトークンBを受取
-                token_a_per_sol = self._get_token_price_in_sol(token_a_address)
-                if token_a_per_sol <= 0:
-                    return float('inf')
-                
-                # SOL -> トークンA量に変換
-                delta_in = put_amount * token_a_per_sol
-                
-                # 手数料を差し引いた実際の投入量
-                x_in = delta_in * (1 - fee_rate)
-                
-                # 定数積制約での出力量計算: Δy = rb * x_in / (ra + x_in)
-                if ra + x_in <= 0:
-                    return float('inf')
-                    
-                delta_out = rb * x_in / (ra + x_in)
-                
-                # 実効レート = 出力量 / 入力量
-                effective_rate = delta_out / delta_in
+                # 実効レート
+                effective_rate = (1.0 - fee) * rb / ra
                 
             else:
                 # B -> A: トークンBを投入してトークンAを受取
-                token_b_per_sol = self._get_token_price_in_sol(token_b_address)
-                if token_b_per_sol <= 0:
-                    return float('inf')
-                
-                # SOL -> トークンB量に変換
-                delta_in = put_amount * token_b_per_sol
-                
-                # 手数料を差し引いた実際の投入量
-                x_in = delta_in * (1 - fee_rate)
-                
-                # 定数積制約での出力量計算: Δx = ra * x_in / (rb + x_in)
-                if rb + x_in <= 0:
-                    return float('inf')
-                    
-                delta_out = ra * x_in / (rb + x_in)
-                
-                # 実効レート = 出力量 / 入力量
-                effective_rate = delta_out / delta_in
+                # 実効レート
+                effective_rate = (1.0 - fee) * ra / rb
             
             # 異常値チェック
             if effective_rate <= 0 or not math.isfinite(effective_rate):

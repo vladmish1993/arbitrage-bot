@@ -24,9 +24,8 @@ from src.graph.arbitrage_path_finder import ArbitragePathFinder
 # from executor import execute_cycle  # 未実装のためコメントアウト
 
 # 設定
-DEFAULT_PUT_AMOUNT = 1.0  # SOL
 DEFAULT_POOL_SIZE = 100   # 取得するプール数
-MIN_PROFIT_THRESHOLD = 0.005  # 最小利益率 0.5%
+MIN_PROFIT_THRESHOLD = 0.001  # 最小利益率 0.1%
 MAX_CYCLES_TO_FIND = 5    # 最大検出サイクル数
 LOG_LEVEL = logging.INFO
 
@@ -88,7 +87,7 @@ class ArbitrageBot:
             # SOL建て価格を取得・保存
             await self.jupiter_client.update_token_prices(
                 mints=verified_mints,
-                out_path=Path("src/data/verified_token_prices.json")
+                output_path=Path("src/data/verified_token_prices.json")
             )
             
             log.info("✅ Token prices updated successfully")
@@ -100,7 +99,6 @@ class ArbitrageBot:
 
     async def create_arbitrage_graph(
         self, 
-        put_amount: float = DEFAULT_PUT_AMOUNT,
         pool_size: int = DEFAULT_POOL_SIZE
     ) -> bool:
         """
@@ -108,8 +106,6 @@ class ArbitrageBot:
         
         Parameters
         ----------
-        put_amount : float, default 1.0
-            投入SOL量（重み計算用）
         pool_size : int, default 100
             取得するプール数
             
@@ -118,13 +114,12 @@ class ArbitrageBot:
         bool
             グラフ作成の成功可否
         """
-        log.info("🏗️ Creating arbitrage graph (put_amount: %.2f SOL, pools: %d)", 
-                put_amount, pool_size)
+        log.info("🏗️ Creating arbitrage graph (pools: %d)", 
+                 pool_size)
         
         try:
             # Raydiumプールからエッジデータを取得
             edges = await self.raydium_client.get_raydium_graph(
-                put_amount=put_amount,
                 pageSize=pool_size
             )
             
@@ -246,7 +241,6 @@ class ArbitrageBot:
 
     async def run_arbitrage_cycle(
         self,
-        put_amount: float = DEFAULT_PUT_AMOUNT,
         pool_size: int = DEFAULT_POOL_SIZE,
         update_prices: bool = True
     ) -> List[Dict]:
@@ -255,8 +249,6 @@ class ArbitrageBot:
         
         Parameters
         ----------
-        put_amount : float, default 1.0
-            投入SOL量
         pool_size : int, default 100
             取得するプール数  
         update_prices : bool, default True
@@ -277,7 +269,7 @@ class ArbitrageBot:
                     log.warning("⚠️ Price update failed, continuing with existing prices")
             
             # 2. グラフ作成
-            graph_success = await self.create_arbitrage_graph(put_amount, pool_size)
+            graph_success = await self.create_arbitrage_graph(pool_size)
             if not graph_success:
                 log.error("❌ Graph creation failed, aborting cycle")
                 return []
@@ -309,8 +301,7 @@ async def test_arbitrage_bot():
         async with ArbitrageBot() as bot:
             # テスト実行（小規模）
             opportunities = await bot.run_arbitrage_cycle(
-                put_amount=1.0,      # 1 SOL
-                pool_size=20,        # 20プール（テスト用）
+                pool_size=1000,        # 1000プール（テスト用）
                 update_prices=False   # テスト時は価格更新スキップ
             )
             
@@ -364,13 +355,9 @@ if __name__ == "__main__":
         sys.exit(1)
 
 
-# 使用例とテストコマンド:
-#
-# 通常実行:
-# python -m src
-#
-# テスト実行:
-# python -m src test
-#
+
 # test_arbitrage_bot関数のワンライナーテスト:
 # python -c "import asyncio; import logging; logging.basicConfig(level=logging.DEBUG); from src.__main__ import test_arbitrage_bot; asyncio.run(test_arbitrage_bot())"
+
+# 全体テスト
+# python -m src test
