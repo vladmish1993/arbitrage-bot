@@ -56,4 +56,50 @@ class JupiterClient:
         mint アドレスだけを抽出して返すラッパー。
         """
         tokens = await self.verified_tokens(limit)
-        return [t["mint"] for t in tokens]
+        return [t["address"] for t in tokens]
+    
+    async def get_optimal_route(self, input_mint: str, output_mint: str, amount: int) -> Dict:
+        """
+        2つのミント間の最適スワップルートを取得する。
+        
+        Parameters
+        ----------
+        input_mint : str
+            入力トークンのミントアドレス
+        output_mint : str
+            出力トークンのミントアドレス
+        amount : int
+            入力トークンの量（各トークンの最小単位）
+        
+        Returns
+        -------
+        Dict
+            Jupiter APIからのクォートレスポンス、またはエラー情報
+        """
+        quote_url = "https://quote-api.jup.ag/v6/quote"
+        
+        params = {
+            "inputMint": input_mint,
+            "outputMint": output_mint,
+            "amount": amount,
+            "slippageBps": 50
+        }
+        
+        async with httpx.AsyncClient(timeout=10) as client:
+            try:
+                response = await client.get(quote_url, params=params)
+                response.raise_for_status()
+                
+                data = response.json()
+                log.info(f"Route fetched: {input_mint[:8]}...→{output_mint[:8]}... | Rate: {float(data.get('outAmount', 0))/amount:.6f}")
+                return data
+                
+            except httpx.HTTPStatusError as e:
+                log.error(f"HTTP error getting route: {e}")
+                return {"error": f"HTTP {e.response.status_code}"}
+            except Exception as e:
+                log.error(f"Error getting route: {e}")
+                return {"error": str(e)}
+
+# TEST用コマンド
+# python3 -c "import asyncio; from jupiter_client import JupiterClient; client = JupiterClient(); mints = asyncio.run(client.verified_mints()); print(mints)"
