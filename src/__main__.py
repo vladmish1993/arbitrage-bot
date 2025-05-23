@@ -120,7 +120,8 @@ class ArbitrageBot:
         try:
             # Raydiumプールからエッジデータを取得
             edges = await self.raydium_client.get_raydium_graph(
-                pageSize=pool_size
+                pageSize=pool_size,
+                max_pages=3
             )
             
             if not edges:
@@ -134,6 +135,11 @@ class ArbitrageBot:
             stats = self.path_finder.get_graph_stats()
             log.info("📊 Graph created: %d vertices, %d edges, density: %.3f", 
                     stats['vertices'], stats['edges'], stats['density'])
+            
+            print("=== Graph Statistics ===")
+            for key, value in stats.items():
+                print(f"{key:25s}: {value}")
+            print("=== ================ ===")
             
             return True
             
@@ -264,7 +270,7 @@ class ArbitrageBot:
         try:
             # 1. トークン価格取得・更新
             if update_prices:
-                price_success = await self.update_token_prices()
+                price_success = await self.update_token_prices(limit=10000)
                 if not price_success:
                     log.warning("⚠️ Price update failed, continuing with existing prices")
             

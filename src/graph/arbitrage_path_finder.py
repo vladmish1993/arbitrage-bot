@@ -383,29 +383,72 @@ class ArbitragePathFinder:
             "cycle_length": len(cycle_indices) - 1
         }
 
-    def get_graph_stats(self) -> Dict:
+    def get_graph_stats(self) -> Dict[str, any]:
         """
         グラフの統計情報を取得
-        
+
         Returns
         -------
-        Dict
+        Dict[str, Any]
             グラフの統計情報
         """
         if self.graph is None:
             return {"error": "Graph not built"}
-            
-        sol_nodes = sum(1 for is_sol in self.graph.vs["is_sol"] if is_sol)
-        
+
+        # 基本情報
+        num_vertices = self.graph.vcount()
+        num_edges    = self.graph.ecount()
+        sol_nodes    = sum(1 for is_sol in self.graph.vs["is_sol"] if is_sol)
+        other_tokens = num_vertices - sol_nodes
+
+        # 連結性
+        is_weakly_conn = self.graph.is_connected(mode="weak")
+        comps          = self.graph.components(mode="weak")
+        comp_sizes     = comps.sizes()
+        num_components = len(comp_sizes)
+        largest_comp   = max(comp_sizes) if comp_sizes else 0
+        smallest_comp  = min(comp_sizes) if comp_sizes else 0
+
+        # 密度
+        density = self.graph.density()
+
+        # 次数分布
+        indegrees = self.graph.indegree()
+        outdegrees = self.graph.outdegree()
+        degrees = [i + o for i, o in zip(indegrees, outdegrees)]
+        max_deg = max(degrees) if degrees else 0
+        min_deg = min(degrees) if degrees else 0
+        avg_deg = sum(degrees) / len(degrees) if degrees else 0
+        # 中央値
+        deg_sorted = sorted(degrees)
+        mid = len(deg_sorted) // 2
+        if len(deg_sorted) % 2 == 0:
+            median_deg = (deg_sorted[mid - 1] + deg_sorted[mid]) / 2
+        else:
+            median_deg = deg_sorted[mid]
+
+        # クラスタリング係数（グローバルトランジティビティ）
+        clustering = self.graph.transitivity_undirected()
+
         return {
-            "vertices": self.graph.vcount(),
-            "edges": self.graph.ecount(),
+            "vertices": num_vertices,
+            "edges": num_edges,
             "sol_nodes": sol_nodes,
-            "other_tokens": self.graph.vcount() - sol_nodes,
-            "is_connected": self.graph.is_connected(mode="weak"),
-            "density": self.graph.density(),
-            "max_degree": max(self.graph.degree()) if self.graph.vcount() > 0 else 0
+            "other_tokens": other_tokens,
+            "is_weakly_connected": is_weakly_conn,
+            "component_count": num_components,
+            "largest_component_size": largest_comp,
+            "smallest_component_size": smallest_comp,
+            "density": density,
+            "max_degree": max_deg,
+            "min_degree": min_deg,
+            "avg_degree": avg_deg,
+            "median_degree": median_deg,
+            "max_indegree": max(indegrees) if indegrees else 0,
+            "max_outdegree": max(outdegrees) if outdegrees else 0,
+            "clustering_coefficient": clustering,
         }
+
 
 
 # TEST用関数

@@ -25,7 +25,7 @@ SOL_MINT = "So11111111111111111111111111111111111111112"
 MAX_IDS_PER_BATCH = 100  # Price API に一度に渡せる最大 mint 数
 DEFAULT_TIMEOUT = 10.0  # APIタイムアウト（秒）
 RATE_LIMIT_DELAY = 0.1  # レート制限対応の待機時間（秒）
-DEFAULT_OUTPUT_PATH = "src/data/verified_token_prices.json"
+DEFAULT_OUTPUT_PATH = "src/data/tokens_info.json"
 
 # ロガー設定
 log = logging.getLogger(__name__)
@@ -155,7 +155,7 @@ class JupiterClient:
         vs_token: str = SOL_MINT
     ) -> None:
         """
-        トークンのSOL建て価格を取得してJSONファイルに保存
+        トークンのSOL建て価格とメタ情報を取得してJSONファイルに保存
         
         Parameters
         ----------
@@ -169,7 +169,7 @@ class JupiterClient:
         Returns
         -------
         None
-            価格データをJSONファイルに保存（戻り値なし）
+            価格データとメタ情報をJSONファイルに保存（戻り値なし）
             
         Raises
         ------
@@ -187,8 +187,13 @@ class JupiterClient:
         
         出力ファイル形式:
         {
-          "token_address_1": 0.123456,
-          "token_address_2": 1.000000,
+          "token_address_1": {
+            "price": 0.123456,
+            "decimals": 9,
+            "symbol": "TOKEN",
+            "name": "Token Name",
+            ...
+          },
           ...
         }
         """
@@ -201,7 +206,25 @@ class JupiterClient:
         
         log.info("Starting price update for %d tokens", len(mints))
         
-        results: Dict[str, float] = {}
+        # まずトークンのメタ情報を取得
+        log.info("Fetching token metadata...")
+        all_tokens = await self.verified_tokens(limit=max(250, len(mints)))
+        
+        # mintアドレスをキーとしたメタ情報の辞書を作成
+        token_metadata = {}
+        for token in all_tokens:
+            mint_address = token.get("mint") or token.get("address")
+            if mint_address:
+                token_metadata[mint_address] = {
+                    "symbol": token.get("symbol", ""),
+                    "name": token.get("name", ""),
+                    "decimals": token.get("decimals", 0),
+                    "logoURI": token.get("logoURI", ""),
+                    "tags": token.get("tags", []),
+                    "extensions": token.get("extensions", {}),
+                }
+        
+        results: Dict[str, Dict[str, Any]] = {}
         successful_batches = 0
         failed_batches = 0
         
@@ -232,9 +255,22 @@ class JupiterClient:
                     if isinstance(token_data, dict) and "price" in token_data:
                         try:
                             price = float(token_data["price"])
-                            results[token_id] = price
+                            
+                            # メタ情報と価格を統合
+                            token_info = token_metadata.get(token_id, {}).copy()
+                            token_info["price"] = price
+                            token_info["address"] = token_id
+                            
+                            # メタ情報がない場合のデフォルト値を設定
+                            if not token_info.get("symbol"):
+                                token_info["symbol"] = token_id[:8]
+                            if "decimals" not in token_info:
+                                token_info["decimals"] = 9  # Solanaのデフォルト
+                            
+                            results[token_id] = token_info
                             batch_results += 1
-                            log.debug("Price for %s: %.8f", token_id[:8], price)
+                            log.debug("Price for %s (%s): %.8f", 
+                                     token_info["symbol"], token_id[:8], price)
                         except (ValueError, TypeError) as e:
                             log.warning("Invalid price data for %s: %s", token_id, e)
                     else:
@@ -266,7 +302,7 @@ class JupiterClient:
             
             temp_path.replace(output_path)
             
-            log.info("Price update completed: %d prices saved to %s (success: %d/%d batches)", 
+            log.info("Price update completed: %d tokens saved to %s (success: %d/%d batches)", 
                     len(results), output_path, successful_batches, len(batches))
             
             if failed_batches > 0:
