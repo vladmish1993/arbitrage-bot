@@ -3,11 +3,11 @@
 Jupiter API クライアント
 
 -----------------------------
-目的:
-    - Jupiter の TokenAPI / PriceAPI を使用してトークン情報と価格データを取得
-    - verified トークンのメタ情報取得
-    - SOL建て価格データの取得と保存
-    - 最適スワップルートの取得（Quote API）
+Purpose:
+    - Retrieve token info and prices using Jupiter's TokenAPI and PriceAPI
+    - Obtain metadata for verified tokens
+    - Retrieve and store SOL based price data
+    - Obtain optimal swap route (Quote API)
 """
 
 import asyncio
@@ -18,80 +18,80 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-# 定数
+# Constants
 TOKEN_URL = "https://lite-api.jup.ag/tokens/v1/tagged/verified"
 PRICE_URL = "https://lite-api.jup.ag/price/v2"
 SOL_MINT = "So11111111111111111111111111111111111111112"
-MAX_IDS_PER_BATCH = 100  # Price API に一度に渡せる最大 mint 数
-DEFAULT_TIMEOUT = 10.0  # APIタイムアウト（秒）
-RATE_LIMIT_DELAY = 0.1  # レート制限対応の待機時間（秒）
+MAX_IDS_PER_BATCH = 100  # Maximum mints per request for the Price API
+DEFAULT_TIMEOUT = 10.0  # API timeout (seconds)
+RATE_LIMIT_DELAY = 0.1  # Delay for rate limiting (seconds)
 DEFAULT_OUTPUT_PATH = "src/data/tokens_info.json"
 
-# ロガー設定
+# Logger setup
 log = logging.getLogger(__name__)
 
 
 class JupiterClient:
     """
-    Jupiter API を使用してトークン情報、価格データ、スワップルートを取得するクライアント
+    Client that uses the Jupiter API to obtain token info, price data and swap routes
     
-    主な機能:
-    - verified トークン一覧の取得
-    - SOL建て価格データの取得と保存
-    - 最適スワップルートの取得
+    Key features:
+    - Retrieve list of verified tokens
+    - Retrieve and store SOL based price data
+    - Obtain optimal swap route
     
     Attributes
     ----------
     _client : httpx.AsyncClient
-        HTTP クライアント（接続プール再利用）
+        HTTP client (connection pool reuse)
     """
 
     def __init__(self, timeout: float = DEFAULT_TIMEOUT) -> None:
         """
-        JupiterClientを初期化
+        Initialize JupiterClient
         
         Parameters
         ----------
         timeout : float, default 10.0
-            APIリクエストのタイムアウト（秒）
+            API request timeout (seconds)
         """
         self._client = httpx.AsyncClient(timeout=timeout)
         log.debug("JupiterClient initialized with timeout=%.1fs", timeout)
 
     async def __aenter__(self) -> "JupiterClient":
-        """非同期コンテキストマネージャー（入場）"""
+        """Enter async context manager"""
         return self
 
     async def __aexit__(self, *args: Any) -> None:
-        """非同期コンテキストマネージャー（退場）"""
+        """Exit async context manager"""
         await self.aclose()
 
     async def aclose(self) -> None:
-        """内部HTTPクライアントをクリーンアップ"""
+        """Clean up internal HTTP client"""
         await self._client.aclose()
         log.debug("JupiterClient closed")
 
     async def verified_tokens(self, limit: int = 250) -> List[Dict[str, Any]]:
         """
-        Jupiter の verified トークン一覧を取得
+        Get a list of Jupiter verified tokens
         
         Parameters
         ----------
         limit : int, default 250
-            取得するトークンの最大数
+            Maximum number of tokens to fetch
             
         Returns
         -------
         List[Dict[str, Any]]
-            各トークンのメタ情報オブジェクト
-            各要素には address, symbol, name, decimals などが含まれる
+            Metadata objects for each token
+            Each item includes address, symbol, name, decimals and so on
             
         Raises
         ------
         httpx.HTTPStatusError
-            APIリクエストが失敗した場合
+            When the API request fails
         httpx.TimeoutException
-            リクエストがタイムアウトした場合
+            When the request times out
         """
         params = {"limit": limit}
         
@@ -121,22 +121,22 @@ class JupiterClient:
 
     async def verified_mints(self, limit: int = 250) -> List[str]:
         """
-        verified トークンのmintアドレス一覧を取得
+        Get list of mint addresses for verified tokens
         
         Parameters
         ----------
         limit : int, default 250
-            取得するトークンの最大数
+            Maximum number of tokens to fetch
             
         Returns
         -------
         List[str]
-            mintアドレスのリスト
-            無効なアドレスは除外される
+            List of mint addresses
+            Invalid addresses are excluded
         """
         tokens = await self.verified_tokens(limit)
         
-        # API のキー名が "mint" または "address" の可能性に対応
+        # Handle API key names being either "mint" or "address"
         mints = []
         for token in tokens:
             mint_address = token.get("mint") or token.get("address")
@@ -155,37 +155,37 @@ class JupiterClient:
         vs_token: str = SOL_MINT
     ) -> None:
         """
-        トークンのSOL建て価格とメタ情報を取得してJSONファイルに保存
+        Get SOL-denominated prices and metadata and save to JSON
         
         Parameters
         ----------
         mints : List[str]
-            価格を取得するmintアドレスのリスト
+            List of mint addresses to fetch prices for
         output_path : Optional[Path], default None
-            出力ファイルパス（Noneの場合はデフォルトパスを使用）
+            Output file path (default used if None)
         vs_token : str, default SOL_MINT
-            基準通貨のmintアドレス（通常はSOL）
+            Mint address of the base currency (usually SOL)
             
         Returns
         -------
         None
-            価格データとメタ情報をJSONファイルに保存（戻り値なし）
+            Save price data and metadata to a JSON file (no return value)
             
         Raises
         ------
         httpx.HTTPStatusError
-            APIリクエストが失敗した場合
+            When the API request fails
         httpx.TimeoutException
-            リクエストがタイムアウトした場合
+            When the request times out
         OSError
-            ファイル書き込みに失敗した場合
+            When file writing fails
             
         Notes
         -----
-        大量のmintアドレスを100件ずつのバッチに分けて処理し、
-        レート制限を考慮して適切な間隔で API を呼び出します。
+        Process large numbers of mint addresses in batches of 100
+        Call the API at appropriate intervals considering rate limits.
         
-        出力ファイル形式:
+        Output file format:
         {
           "token_address_1": {
             "price": 0.123456,
@@ -206,11 +206,11 @@ class JupiterClient:
         
         log.info("Starting price update for %d tokens", len(mints))
         
-        # まずトークンのメタ情報を取得
+        # Fetch token metadata first
         log.info("Fetching token metadata...")
         all_tokens = await self.verified_tokens(limit=max(250, len(mints)))
         
-        # mintアドレスをキーとしたメタ情報の辞書を作成
+        # Build a metadata dictionary keyed by mint address
         token_metadata = {}
         for token in all_tokens:
             mint_address = token.get("mint") or token.get("address")
@@ -228,7 +228,7 @@ class JupiterClient:
         successful_batches = 0
         failed_batches = 0
         
-        # バッチ処理（100件ずつ）
+        # Batch processing (100 at a time)
         batches = [mints[i:i + MAX_IDS_PER_BATCH] for i in range(0, len(mints), MAX_IDS_PER_BATCH)]
         
         for batch_idx, batch in enumerate(batches):
@@ -247,7 +247,7 @@ class JupiterClient:
                 response_data = response.json()
                 log.debug("Price API response keys: %s", list(response_data.keys()))
                 
-                # APIレスポンス形式: {"data": {"token_id": {"id": "...", "price": "..."}}}
+                # API response format: {"data": {"token_id": {"id": "...", "price": "..."}}}
                 data_dict = response_data.get("data", {})
                 
                 batch_results = 0
@@ -256,12 +256,12 @@ class JupiterClient:
                         try:
                             price = float(token_data["price"])
                             
-                            # メタ情報と価格を統合
+                            # Combine metadata and price
                             token_info = token_metadata.get(token_id, {}).copy()
                             token_info["price"] = price
                             token_info["address"] = token_id
                             
-                            # メタ情報がない場合のデフォルト値を設定
+                            # Set default values when metadata is missing
                             if not token_info.get("symbol"):
                                 token_info["symbol"] = token_id[:8]
                             if "decimals" not in token_info:
@@ -279,8 +279,8 @@ class JupiterClient:
                 successful_batches += 1
                 log.debug("Batch %d completed: %d prices collected", batch_idx + 1, batch_results)
                 
-                # レート制限対応
-                if batch_idx < len(batches) - 1:  # 最後のバッチでは待機不要
+                # Rate limiting
+                if batch_idx < len(batches) - 1:  # no wait needed for the last batch
                     await asyncio.sleep(RATE_LIMIT_DELAY)
                 
             except Exception as e:
@@ -291,11 +291,11 @@ class JupiterClient:
         if not results:
             raise ValueError("No price data retrieved")
         
-        # ファイル書き込み（アトミック操作）
+        # Write file atomically
         try:
             output_path.parent.mkdir(parents=True, exist_ok=True)
             
-            # 一時ファイルに書き込み後、原子的にリネーム
+            # Write to a temp file then rename atomically
             temp_path = output_path.with_suffix(".tmp")
             with open(temp_path, 'w', encoding='utf-8') as f:
                 json.dump(results, f, ensure_ascii=False, indent=2, sort_keys=True)
@@ -314,19 +314,19 @@ class JupiterClient:
 
     async def get_token_price(self, mint_address: str, vs_token: str = SOL_MINT) -> Optional[float]:
         """
-        単一トークンの価格を取得
+        Get the price of a single token
         
         Parameters
         ----------
         mint_address : str
-            価格を取得するトークンのmintアドレス
+            Mint address of the token to price
         vs_token : str, default SOL_MINT
-            基準通貨のmintアドレス
+            Mint address of the base currency
             
         Returns
         -------
         Optional[float]
-            トークン価格（取得できない場合はNone）
+            Token price (None if unavailable)
         """
         try:
             params = {
@@ -355,8 +355,8 @@ class JupiterClient:
             return None
 
 
-# TEST用コマンド（トークン一覧取得）
-# python -c "import asyncio,logging; logging.basicConfig(level=logging.INFO); from src.clients.jupiter_client import JupiterClient; exec('async def test():\n async with JupiterClient() as client:\n  tokens = await client.verified_tokens(limit=5)\n  print(f\"取得: {len(tokens)}トークン\")\n  print(\"例:\", tokens[0] if tokens else \"None\")'); asyncio.run(test())"
+# Test command (fetch token list)
+# python -c "import asyncio,logging; logging.basicConfig(level=logging.INFO); from src.clients.jupiter_client import JupiterClient; exec('async def test():\n async with JupiterClient() as client:\n  tokens = await client.verified_tokens(limit=5)\n  print(f\"Found: {len(tokens)} tokens\")\n  print(\"Example:\", tokens[0] if tokens else \"None\")'); asyncio.run(test())"
 
-# TEST用コマンド（価格更新）
+# Test command (price update)
 # python -c "import asyncio,logging; logging.basicConfig(level=logging.INFO); from src.clients.jupiter_client import JupiterClient; exec('async def test():\n async with JupiterClient() as client:\n  mints = await client.verified_mints(limit=10)\n  await client.update_token_prices(mints)'); asyncio.run(test())"

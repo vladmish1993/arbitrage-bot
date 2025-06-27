@@ -9,7 +9,7 @@ from solana.rpc.types import TxOpts
 from config import SOLANA_RPC_URL, SECRET_KEY_HEX
 
 class SolanaClient:
-    """薄いラッパークラス (send_transaction / airdrop)"""
+    """Thin wrapper class (send_transaction / airdrop)"""
 
     def __init__(self):
         self.client = AsyncClient(SOLANA_RPC_URL)
@@ -17,7 +17,7 @@ class SolanaClient:
             secret = binascii.unhexlify(SECRET_KEY_HEX)
             self.keypair = Keypair.from_secret_key(secret)
         else:
-            # devnet 用にエフェメラルウォレット生成 & エアドロップ
+            # Generate ephemeral wallet for devnet and airdrop
             self.keypair = Keypair()
 
     async def airdrop_if_needed(self, min_balance: int = 2_000_000_000):

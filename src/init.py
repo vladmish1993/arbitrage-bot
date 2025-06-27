@@ -1,1 +1,1 @@
-# パッケージ認識用 (空ファイル)
+# Empty file for package recognition

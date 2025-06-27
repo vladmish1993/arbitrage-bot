@@ -1,12 +1,12 @@
 # src/clients/base_dex_client.py
 """
-DEX API クライアントの基底クラス
+Base class for DEX API clients
 
 -----------------------------
-目的:
-    - 各DEXの共通機能を抽象化
-    - ベルマン・フォードアルゴリズム用のグラフデータ生成の共通ロジック
-    - トークン価格管理、プール検証、重み計算等の共通処理
+Purpose:
+    - Abstract common functionality of each DEX
+    - Shared logic to build graph data for the Bellman-Ford algorithm
+    - Common routines for token price management, pool validation and weight calculation
 """
 
 import json
@@ -16,57 +16,57 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-# 共通定数
+# Common constants
 SOL_ADDRESS = "So11111111111111111111111111111111111111112"  # Wrapped SOL address
 VERIFIED_TOKENS_PATH = "src/data/verified_token_prices.json"
-MIN_TVL_THRESHOLD = 5_000.0  # 最小TVL閾値（USD）
-DEFAULT_TIMEOUT = 10.0  # APIタイムアウト（秒）
+MIN_TVL_THRESHOLD = 5_000.0  # Minimum TVL threshold (USD)
+DEFAULT_TIMEOUT = 10.0  # API timeout (seconds)
 
-# ロガー設定
+# Logger setup
 log = logging.getLogger(__name__)
 
 
 class BaseDexClient(ABC):
     """
-    DEX APIクライアントの基底クラス
+    Base class for DEX API clients
     
-    各DEXの共通機能を提供し、固有の実装は派生クラスで行う
+    Provides common functionality for each DEX; subclass handles specific implementations
     
     Attributes
     ----------
     _token_prices : Optional[Dict[str, float]]
-        SOL建てトークン価格データのキャッシュ
+        Cache of token prices in SOL
     _token_prices_path : str
-        トークン価格JSONファイルのパス
+        Path to the token price JSON file
     """
 
     def __init__(self, token_prices_path: Optional[str] = None) -> None:
         """
-        BaseDexClientを初期化
+        Initialize BaseDexClient
         
         Parameters
         ----------
         token_prices_path : Optional[str]
-            トークン価格JSONファイルのパス（Noneの場合はデフォルトパスを使用）
+            Path to the token price JSON file(use default if None)
         """
         self._token_prices: Optional[Dict[str, float]] = None
         self._token_prices_path = token_prices_path or VERIFIED_TOKENS_PATH
         
     def _load_token_prices(self) -> Dict[str, float]:
         """
-        トークン価格データを読み込み（キャッシュ機能付き）
+        Load token price data with caching
         
         Returns
         -------
         Dict[str, float]
-            トークンアドレス -> SOL建て価格のマッピング
+            Mapping from token address to price in SOL
             
         Raises
         ------
         FileNotFoundError
-            価格ファイルが見つからない場合
+            When the price file is not found
         json.JSONDecodeError
-            JSONファイルの形式が不正な場合
+            When the JSON file format is invalid
         """
         if self._token_prices is None:
             try:
@@ -91,33 +91,33 @@ class BaseDexClient(ABC):
 
     def _validate_pool_data(self, pool: Dict, required_fields: List[str]) -> bool:
         """
-        プールデータの妥当性を検証（基本検証）
+        Validate pool data (basic checks)
         
         Parameters
         ----------
         pool : Dict
             プールデータ
         required_fields : List[str]
-            必須フィールドのリスト
+            List of required fields
             
         Returns
         -------
         bool
-            妥当性検証結果
+            Validation result
         """
-        # 必須フィールドの存在チェック
+        # Check for required fields
         for field in required_fields:
             if field not in pool or pool[field] is None:
                 log.debug("Pool %s missing required field: %s", pool.get("id"), field)
                 return False
         
-        # TVLの最小値チェック（アービトラージに不適なプールを除外）
+        # Minimum TVL check (exclude pools unsuitable for arbitrage)
         tvl = pool.get("tvl", 0)
         if tvl < MIN_TVL_THRESHOLD:
             log.debug("Pool %s TVL too low: $%.2f", pool.get("id"), tvl)
             return False
             
-        # 価格の妥当性チェック
+        # Validate price
         price = pool.get("price", 0)
         if price <= 0:
             log.debug("Pool %s invalid price: %s", pool.get("id"), price)
@@ -127,31 +127,31 @@ class BaseDexClient(ABC):
 
     def _calculate_weight(self, pool_info: Dict, direction: str) -> float:
         """
-        定数積モデルを使用したエッジ重み計算
+        Edge weight calculation using the constant product model
         
         Parameters
         ----------
         pool_info : Dict
-            プール情報（以下のキーを含む必要がある）:
-            - liquidity_a: トークンAの流動性
-            - liquidity_b: トークンBの流動性
-            - token_a: トークンA情報（decimals含む）
-            - token_b: トークンB情報（decimals含む）
-            - fee_rate: 手数料率
+            Pool information (must include the following keys):
+            - liquidity_a: liquidity of token A
+            - liquidity_b: liquidity of token B
+            - token_a: token A info (including decimals)
+            - token_b: token B info (including decimals)
+            - fee_rate: fee rate
         direction : str
-            交換方向（"A_TO_B" or "B_TO_A"）
+            swap direction ("A_TO_B" or "B_TO_A")
             
         Returns
         -------
         float
-            ベルマン・フォード用の重み（対数変換済み）
+            Weight for Bellman-Ford (log transformed)
             
         Notes
         -----
-        spot price (dx→0)を使用して実効レートを計算:
-        1. 手数料を差し引き
-        2. 実効レート = 出力トークンリザーブ / 入力トークンリザーブ
-        3. 重み = -log(実効レート)
+        Calculate effective rate using spot price (dx→0):
+        1. Subtract fees
+        2. Effective rate = output token reserve / input token reserve
+        3. Weight = -log(effective rate)
         """
         ra_raw = pool_info["liquidity_a"]
         rb_raw = pool_info["liquidity_b"]
@@ -165,7 +165,7 @@ class BaseDexClient(ABC):
         except (TypeError, ValueError):
             return float("inf")
 
-        # decimals 補正済みリザーブ
+        # Reserves adjusted for decimals
         ra = ra_raw / (10 ** dec_a)
         rb = rb_raw / (10 ** dec_b)
 
@@ -176,23 +176,23 @@ class BaseDexClient(ABC):
         
         try:
             if direction == "A_TO_B":
-                # A -> B: トークンAを投入してトークンBを受取
-                # 実効レート
+                # A -> B: Swap token A for token B
+                # Effective rate
                 effective_rate = (1.0 - fee) * rb / ra
                 
             else:
-                # B -> A: トークンBを投入してトークンAを受取
-                # 実効レート
+                # B -> A: Swap token B for token A
+                # Effective rate
                 effective_rate = (1.0 - fee) * ra / rb
             
-            # 異常値チェック
+            # Check for abnormal values
             if effective_rate <= 0 or not math.isfinite(effective_rate):
                 return float('inf')
             
-            # ベルマン・フォード用の対数重み
+            # Log weight for Bellman-Ford
             weight = -math.log(effective_rate)
             
-            # 数値的安定性チェック
+            # Numerical stability check
             if not math.isfinite(weight):
                 return float('inf')
                 
@@ -205,21 +205,21 @@ class BaseDexClient(ABC):
 
     def _validate_liquidity(self, liquidity_a: float, liquidity_b: float, pool_id: str = None) -> bool:
         """
-        流動性の妥当性をチェック
+        Check validity of liquidity
         
         Parameters
         ----------
         liquidity_a : float
-            トークンAの流動性
+            liquidity of token A
         liquidity_b : float
-            トークンBの流動性
+            liquidity of token B
         pool_id : str, optional
-            プールID（ログ用）
+            Pool ID (for logging)
             
         Returns
         -------
         bool
-            流動性が妥当かどうか
+            Whether the liquidity values are valid
         """
         if liquidity_a <= 0 or liquidity_b <= 0:
             log.debug("Pool %s invalid liquidity: A=%s, B=%s", pool_id, liquidity_a, liquidity_b)
@@ -229,29 +229,29 @@ class BaseDexClient(ABC):
     @abstractmethod
     async def get_graph(self, **kwargs) -> List[Tuple[str, str, float, Dict]]:
         """
-        DEXからプール情報を取得し、ベルマン・フォード用のエッジリストを返す
+        Retrieve pool information from the DEX and return edges for Bellman-Ford
         
         Parameters
         ----------
         **kwargs
-            DEX固有のパラメータ
+            DEX specific parameters
             
         Returns
         -------
         List[Tuple[str, str, float, Dict]]
-            エッジリスト: (from_token, to_token, weight, pool_info)
+            Edge list: (from_token, to_token, weight, pool_info)
         """
         pass
 
     @abstractmethod
     async def print_pools(self, **kwargs) -> None:
         """
-        DEXのプール情報をログに出力
+        Print DEX pool information to the log
         
         Parameters
         ----------
         **kwargs
-            DEX固有のパラメータ
+            DEX specific parameters
         """
         pass
 
@@ -259,11 +259,11 @@ class BaseDexClient(ABC):
     @abstractmethod
     def dex_name(self) -> str:
         """
-        DEX名を返す
+        Return the DEX name
         
         Returns
         -------
         str
-            DEX名
+            DEX name
         """
         pass

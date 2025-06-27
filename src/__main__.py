@@ -1,14 +1,14 @@
 # src/__main__.py
 """
-アービトラージボット メイン実行モジュール
+Main execution module for the arbitrage bot
 
 -----------------------------
-機能:
-    1. トークン価格取得・更新
-    2. Raydiumプールからグラフ作成  
-    3. 負のサイクル（アービトラージ機会）探索
-    4. 最適投入額決定（未実装）
-    5. テスト実行機能
+Features:
+    1. Fetch and update token prices
+    2. Build graph from Raydium pools  
+    3. Search for negative cycles (arbitrage opportunities)
+    4. Determine optimal volume (not implemented)
+    5. Test run functionality
 """
 
 import asyncio
@@ -17,19 +17,19 @@ import sys
 from pathlib import Path
 from typing import List, Dict, Optional
 
-# クライアントとコア機能のインポート
+# Import clients and core functionality
 from src.clients.jupiter_client import JupiterClient
 from src.clients.raydium_client import RaydiumClient
 from src.graph.arbitrage_path_finder import ArbitragePathFinder
-# from executor import execute_cycle  # 未実装のためコメントアウト
+# from executor import execute_cycle  # Commented out as not implemented yet
 
-# 設定
-DEFAULT_POOL_SIZE = 100   # 取得するプール数
-MIN_PROFIT_THRESHOLD = 0.001  # 最小利益率 0.1%
-MAX_CYCLES_TO_FIND = 5    # 最大検出サイクル数
+# Configuration
+DEFAULT_POOL_SIZE = 100   # Number of pools to fetch
+MIN_PROFIT_THRESHOLD = 0.001  # Minimum profit rate 0.1%
+MAX_CYCLES_TO_FIND = 5    # Maximum cycles to detect
 LOG_LEVEL = logging.INFO
 
-# ロガー設定
+# Logger configuration
 logging.basicConfig(
     level=LOG_LEVEL,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -39,52 +39,52 @@ log = logging.getLogger("ArbitrageBot")
 
 class ArbitrageBot:
     """
-    アービトラージボットのメインクラス
+    Main class of the arbitrage bot
     
-    トークン価格取得からアービトラージ機会検出までの
-    一連のプロセスを管理します。
+    Manages the process from fetching token prices to detecting arbitrage opportunities.
+    
     """
     
     def __init__(self):
-        """ボットを初期化"""
+        """Initialize the bot"""
         self.jupiter_client: Optional[JupiterClient] = None
         self.raydium_client: Optional[RaydiumClient] = None
         self.path_finder: Optional[ArbitragePathFinder] = None
         
     async def __aenter__(self):
-        """非同期コンテキストマネージャー開始"""
+        """Enter async context manager"""
         self.jupiter_client = JupiterClient()
         self.raydium_client = RaydiumClient()
         self.path_finder = ArbitragePathFinder()
         return self
         
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """非同期コンテキストマネージャー終了"""
+        """Exit async context manager"""
         if self.jupiter_client:
             await self.jupiter_client.aclose()
 
     async def update_token_prices(self, limit: int = 250) -> bool:
         """
-        Jupiter APIからトークン価格を取得・更新
+        Fetch and update token prices from the Jupiter API
         
         Parameters
         ----------
         limit : int, default 250
-            取得するトークン数の上限
+            Maximum number of tokens to fetch
             
         Returns
         -------
         bool
-            価格取得の成功可否
+            Whether price retrieval succeeded
         """
         log.info("🔄 Starting token price update (limit: %d)", limit)
         
         try:
-            # verified トークンリストを取得
+            # Retrieve verified token list
             verified_mints = await self.jupiter_client.verified_mints(limit=limit)
             log.info("📋 Retrieved %d verified token mints", len(verified_mints))
             
-            # SOL建て価格を取得・保存
+            # Get and save SOL-denominated prices
             await self.jupiter_client.update_token_prices(
                 mints=verified_mints,
                 output_path=Path("src/data/verified_token_prices.json")
@@ -102,23 +102,23 @@ class ArbitrageBot:
         pool_size: int = DEFAULT_POOL_SIZE
     ) -> bool:
         """
-        Raydiumプールデータからアービトラージ用グラフを作成
+        Create an arbitrage graph from Raydium pool data
         
         Parameters
         ----------
         pool_size : int, default 100
-            取得するプール数
+            Number of pools to fetch
             
         Returns
         -------
         bool
-            グラフ作成の成功可否
+            Whether graph creation succeeded
         """
         log.info("🏗️ Creating arbitrage graph (pools: %d)", 
                  pool_size)
         
         try:
-            # Raydiumプールからエッジデータを取得
+            # Retrieve edge data from Raydium pools
             edges = await self.raydium_client.get_raydium_graph(
                 pageSize=pool_size,
                 max_pages=3
@@ -128,10 +128,10 @@ class ArbitrageBot:
                 log.warning("⚠️ No edges retrieved from Raydium")
                 return False
                 
-            # グラフを構築
+            # Build the graph
             self.path_finder.build_graph_from_raydium_edges(edges)
             
-            # グラフ統計を表示
+            # Display graph statistics
             stats = self.path_finder.get_graph_stats()
             log.info("📊 Graph created: %d vertices, %d edges, density: %.3f", 
                     stats['vertices'], stats['edges'], stats['density'])
@@ -153,25 +153,25 @@ class ArbitrageBot:
         max_cycles: int = MAX_CYCLES_TO_FIND
     ) -> List[Dict]:
         """
-        負のサイクル（アービトラージ機会）を探索
+        Search for negative cycles (arbitrage opportunities)
         
         Parameters
         ----------
         min_profit : float, default 0.005
-            最小利益率（0.5%）
+            Minimum profit rate (0.5%)
         max_cycles : int, default 5
-            最大検出サイクル数
+            Maximum cycles to detect
             
         Returns
         -------
         List[Dict]
-            検出されたアービトラージ機会のリスト
+            List of detected arbitrage opportunities
         """
         log.info("🔍 Searching for arbitrage opportunities (min profit: %.2f%%)", 
                 min_profit * 100)
         
         try:
-            # 負のサイクルを検出
+            # Detect negative cycles
             cycles = self.path_finder.find_negative_cycles(
                 max_cycles=max_cycles,
                 min_profit_threshold=min_profit
@@ -184,7 +184,7 @@ class ArbitrageBot:
                     profit_pct = cycle['profit_rate'] * 100
                     cycle_length = cycle['cycle_length']
                     
-                    # サイクルのトークンシンボルを取得
+                    # Get token symbols for the cycle
                     symbols = []
                     for detail in cycle['path_details']:
                         symbols.append(detail.get('from_symbol', 'Unknown'))
@@ -193,7 +193,7 @@ class ArbitrageBot:
                     log.info("  %d. %s (%.2f%% profit, %d hops)", 
                             i, " → ".join(symbols), profit_pct, cycle_length)
                     
-                    # 詳細情報をデバッグログで出力
+                    # Output detailed information to debug log
                     log.debug("     Path details:")
                     for j, detail in enumerate(cycle['path_details']):
                         log.debug("       %d. %s → %s (TVL: $%.0f, Fee: %.2f%%)",
@@ -214,36 +214,36 @@ class ArbitrageBot:
     #     max_amount: float = 10.0
     # ) -> float:
     #     """
-    #     最適投入額を決定（未実装）
+    #     Determine optimal amount (not implemented)
     #     
     #     Parameters
     #     ----------
     #     cycle : Dict
-    #         アービトラージサイクル情報
+    #         Arbitrage cycle information
     #     max_amount : float, default 10.0
-    #         最大投入額（SOL）
+    #         Maximum amount (SOL)
     #         
     #     Returns
     #     -------
     #     float
-    #         最適投入額
+    #         Optimal amount
     #         
     #     Notes
     #     -----
-    #     この関数は以下を考慮して最適額を計算する予定：
-    #     - 価格インパクト
-    #     - 流動性制約
-    #     - ガス費用
-    #     - リスク管理
+    #     This function will calculate the optimal amount considering:
+    #     - Price impact
+    #     - Liquidity constraints
+    #     - Gas costs
+    #     - Risk management
     #     """
-    #     # TODO: 実装予定
-    #     # 1. 各プールの流動性と価格インパクトを分析
-    #     # 2. 投入額による利益の変化をシミュレーション  
-    #     # 3. リスク調整後の最適額を決定
+    #     # TODO: Implementation planned
+    #     # 1. Analyze each pool's liquidity and price impact
+    #     # 2. Simulate profit change by input amount  
+    #     # 3. Determine the optimal amount after risk adjustment
     #     log.info("🧮 Determining optimal amount for cycle...")
     #     
-    #     # プレースホルダー実装
-    #     return min(max_amount, 1.0)  # 現在は1SOL固定
+    #     # Placeholder implementation
+    #     return min(max_amount, 1.0)  # currently fixed at 1 SOL
 
     async def run_arbitrage_cycle(
         self,
@@ -251,39 +251,39 @@ class ArbitrageBot:
         update_prices: bool = True
     ) -> List[Dict]:
         """
-        完全なアービトラージサイクルを実行
+        Run the complete arbitrage cycle
         
         Parameters
         ----------
         pool_size : int, default 100
-            取得するプール数  
+            Number of pools to fetch  
         update_prices : bool, default True
-            価格更新を実行するか
+            Whether to update prices
             
         Returns
         -------
         List[Dict]
-            検出されたアービトラージ機会
+            Detected arbitrage opportunities
         """
         log.info("🚀 Starting complete arbitrage cycle")
         
         try:
-            # 1. トークン価格取得・更新
+            # 1. Fetch and update token prices
             if update_prices:
                 price_success = await self.update_token_prices(limit=10000)
                 if not price_success:
                     log.warning("⚠️ Price update failed, continuing with existing prices")
             
-            # 2. グラフ作成
+            # 2. Build the graph
             graph_success = await self.create_arbitrage_graph(pool_size)
             if not graph_success:
                 log.error("❌ Graph creation failed, aborting cycle")
                 return []
             
-            # 3. 負サイクル探索
+            # 3. Search for negative cycles
             opportunities = await self.find_arbitrage_opportunities()
             
-            # 4. 最適投入額決定（未実装）
+            # 4. Determine optimal volume (not implemented)
             # for opportunity in opportunities:
             #     optimal_amount = await self.determine_optimal_amount(opportunity)
             #     opportunity['optimal_amount'] = optimal_amount
@@ -299,23 +299,23 @@ class ArbitrageBot:
 
 async def test_arbitrage_bot():
     """
-    アービトラージボットのテスト実行
+    Test run of the arbitrage bot
     """
     log.info("🧪 Starting arbitrage bot test")
     
     try:
         async with ArbitrageBot() as bot:
-            # テスト実行（小規模）
+            # Test run (small scale)
             opportunities = await bot.run_arbitrage_cycle(
-                pool_size=1000,        # 1000プール（テスト用）
-                update_prices=False   # テスト時は価格更新スキップ
+                pool_size=1000,        # 1000 pools (for testing)
+                update_prices=False   # Skip price update during test
             )
             
             if opportunities:
                 log.info("🎉 Test completed successfully - found %d opportunities", 
                         len(opportunities))
                 
-                # 最も利益率の高い機会を表示
+                # Display the most profitable opportunity
                 best_opportunity = max(opportunities, key=lambda x: x['profit_rate'])
                 log.info("🏆 Best opportunity: %.2f%% profit", 
                         best_opportunity['profit_rate'] * 100)
@@ -328,22 +328,22 @@ async def test_arbitrage_bot():
 
 async def main():
     """
-    メイン実行関数
+    Main execution function
     """
     log.info("🤖 Arbitrage Bot Starting...")
     
-    # コマンドライン引数をチェック
+    # Check command line arguments
     if len(sys.argv) > 1 and sys.argv[1] == "test":
-        # テスト実行
+        # Run test
         await test_arbitrage_bot()
     else:
-        # 通常実行
+        # Normal execution
         async with ArbitrageBot() as bot:
             opportunities = await bot.run_arbitrage_cycle()
             
             if opportunities:
                 log.info("🎯 Found %d arbitrage opportunities", len(opportunities))
-                # TODO: 実際の取引実行
+                # TODO: Execute real trades
                 # await execute_cycle(best_cycle, optimal_amount)
             else:
                 log.info("😕 No arbitrage opportunities found")
@@ -362,8 +362,8 @@ if __name__ == "__main__":
 
 
 
-# test_arbitrage_bot関数のワンライナーテスト:
+# One-line test for test_arbitrage_bot function:
 # python -c "import asyncio; import logging; logging.basicConfig(level=logging.DEBUG); from src.__main__ import test_arbitrage_bot; asyncio.run(test_arbitrage_bot())"
 
-# 全体テスト
+# Full test
 # python -m src test
