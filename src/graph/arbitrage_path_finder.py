@@ -1,12 +1,12 @@
 # src/graph/arbitrage_path_finder.py
 """
-アービトラージパス検出モジュール
+Arbitrage path detection module
 
 -----------------------------
-目的:
-    - Raydium/Jupiterのエッジデータからグラフを構築
-    - ベルマン・フォードアルゴリズムで負のサイクル（アービトラージ機会）を検出
-    - 検出されたパスの詳細情報を提供
+Purpose:
+    - Build a graph from Raydium/Jupiter edge data
+    - Detect negative cycles (arbitrage opportunities) with Bellman-Ford
+    - Provide detailed information on detected paths
 """
 
 import logging
@@ -17,36 +17,36 @@ from igraph import Graph
 
 from src.graph.bellman_ford import bellman_ford_negative_cycles
 
-# 定数
+# Constants
 SOL_ADDRESS = "So11111111111111111111111111111111111111112"
-MIN_CYCLE_LENGTH = 2  # 最小サイクル長
-MAX_CYCLE_LENGTH = 5  # 最大サイクル長（計算効率のため）
+MIN_CYCLE_LENGTH = 2  # Minimum cycle length
+MAX_CYCLE_LENGTH = 5  # Maximum cycle length (for efficiency)
 
-# ロガー設定
+# Logger setup
 log = logging.getLogger(__name__)
 
 
 class ArbitragePathFinder:
     """
-    アービトラージパスを検出するためのグラフベース分析クラス
+    A graph-based analysis class for detecting arbitrage paths
     
-    ベルマン・フォードアルゴリズムを使用して負のサイクルを検出し、
-    アービトラージ機会を特定します。
+    Uses the Bellman-Ford algorithm to detect negative cycles and
+    identify arbitrage opportunities.
     
     Attributes
     ----------
     graph : igraph.Graph
-        構築されたグラフオブジェクト
+        Built graph object
     idx_to_token : List[str]
         インデックス -> トークンアドレスのマッピング
     token_to_idx : Dict[str, int]
         トークンアドレス -> インデックスのマッピング
     edge_data : Dict[Tuple[int, int], Dict]
-        エッジ情報のストレージ
+        Storage for edge information
     """
 
     def __init__(self) -> None:
-        """ArbitragePathFinderを初期化"""
+        """Initialize ArbitragePathFinder"""
         self.graph: Optional[Graph] = None
         self.idx_to_token: List[str] = []
         self.token_to_idx: Dict[str, int] = {}
@@ -57,30 +57,30 @@ class ArbitragePathFinder:
         edges: List[Tuple[str, str, float, Dict]]
     ) -> None:
         """
-        Raydiumクライアントから取得したエッジデータからグラフを構築
+        Build graph from edge data obtained from the Raydium client
         
         Parameters
         ----------
         edges : List[Tuple[str, str, float, Dict]]
             Raydiumエッジデータ
-            各要素: (from_token, to_token, weight, pool_data)
+            Each element: (from_token, to_token, weight, pool_data)
             
         Raises
         ------
         ValueError
-            エッジデータが空または無効な場合
+            If edge data is empty or invalid
         """
         if not edges:
             raise ValueError("Edges list cannot be empty")
             
         log.info("Building graph from %d Raydium edges", len(edges))
         
-        # 全ての一意なトークンアドレスを抽出
+        # Extract all unique token addresses
         unique_tokens = set()
         valid_edges = []
         
         for from_token, to_token, weight, pool_data in edges:
-            # 基本検証
+            # Basic validation
             if not from_token or not to_token:
                 log.warning("Skipping edge with empty token addresses")
                 continue
@@ -100,19 +100,19 @@ class ArbitragePathFinder:
         if not valid_edges:
             raise ValueError("No valid edges found after filtering")
             
-        # トークンインデックスマッピングを作成
+        # Create token index mapping
         self.idx_to_token = sorted(list(unique_tokens))
         self.token_to_idx = {token: idx for idx, token in enumerate(self.idx_to_token)}
         
-        # igraphグラフを構築
+        # Build igraph graph
         self.graph = Graph(directed=True)
         self.graph.add_vertices(len(self.idx_to_token))
         
-        # 頂点に属性を設定
+        # Set vertex attributes
         self.graph.vs["token_address"] = self.idx_to_token
         self.graph.vs["is_sol"] = [token == SOL_ADDRESS for token in self.idx_to_token]
         
-        # エッジとエッジデータを追加
+        # Add edges and edge data
         self.edge_data.clear()
         edge_weights = []
         
@@ -120,11 +120,11 @@ class ArbitragePathFinder:
             from_idx = self.token_to_idx[from_token]
             to_idx = self.token_to_idx[to_token]
             
-            # エッジを追加
+            # Add edge
             self.graph.add_edge(from_idx, to_idx)
             edge_weights.append(weight)
             
-            # エッジデータを保存
+            # Store edge data
             self.edge_data[(from_idx, to_idx)] = {
                 "weight": weight,
                 "pool_data": pool_data,
@@ -132,7 +132,7 @@ class ArbitragePathFinder:
                 "to_token": to_token
             }
         
-        # エッジに重み属性を設定
+        # Set weight attribute on edges
         self.graph.es["weight"] = edge_weights
         
         log.info("Graph built successfully: %d vertices, %d edges", 
@@ -143,18 +143,18 @@ class ArbitragePathFinder:
         routes: List[Dict]
     ) -> None:
         """
-        Jupiter routesからグラフを構築（後方互換性のため）
+        Build graph from Jupiter routes (for backward compatibility)
         
         Parameters
         ----------
         routes : List[Dict]
             Jupiter routeデータ
-            各要素: {inToken: {address: str}, outToken: {address: str}, 
+            Each element: {inToken: {address: str}, outToken: {address: str}, 
                     inAmount: int, outAmount: int, ...}
         """
         log.info("Building graph from %d Jupiter routes", len(routes))
         
-        # Jupiter routes → Raydium edge形式に変換
+        # Convert Jupiter routes to Raydium edge format
         edges = []
         for route in routes:
             try:
@@ -165,9 +165,9 @@ class ArbitragePathFinder:
                 
                 if in_amount > 0 and out_amount > 0:
                     rate = out_amount / in_amount
-                    weight = -np.log(rate)  # ベルマン・フォード用の対数重み
+                    weight = -np.log(rate)  # log weight for Bellman-Ford
                     
-                    # pool_dataの模擬データ
+                    # Mock pool_data
                     pool_data = {
                         "pool_id": f"jupiter_{hash((in_token, out_token))}",
                         "rate": rate,
@@ -180,7 +180,7 @@ class ArbitragePathFinder:
                 log.warning("Skipping invalid Jupiter route: %s", e)
                 continue
         
-        # Raydium形式のエッジとして処理
+        # Process as Raydium-style edges
         self.build_graph_from_raydium_edges(edges)
 
     def find_negative_cycles(
@@ -189,30 +189,30 @@ class ArbitragePathFinder:
         min_profit_threshold: float = 0.01
     ) -> List[Dict]:
         """
-        負のサイクル（アービトラージ機会）を検出
+        Detect negative cycles (arbitrage opportunities)
         
         Parameters
         ----------
         max_cycles : int, default 10
-            検出する最大サイクル数
+            Maximum number of cycles to detect
         min_profit_threshold : float, default 0.01
-            最小利益閾値（1% = 0.01）
+            Minimum profit threshold (1% = 0.01)
             
         Returns
         -------
         List[Dict]
-            検出されたアービトラージパスの詳細情報
-            各要素: {
+            Detailed info about detected arbitrage paths
+            Each element: {
                 "cycle": List[str],           # トークンアドレスのサイクル
-                "profit_rate": float,         # 利益率
-                "total_weight": float,        # 総重み
-                "path_details": List[Dict]    # 各エッジの詳細
+                "profit_rate": float,         # profit rate
+                "total_weight": float,        # total weight
+                "path_details": List[Dict]    # details of each edge
             }
             
         Raises
         ------
         RuntimeError
-            グラフが構築されていない場合
+            If the graph has not been built
         """
         if self.graph is None:
             raise RuntimeError("Graph not built. Call build_graph_from_*() first.")
@@ -253,19 +253,19 @@ class ArbitragePathFinder:
         max_depth: int = MAX_CYCLE_LENGTH
     ) -> List[Dict]:
         """
-        特定のトークンから始まるサイクルを検索
+        Search cycles starting from a specific token
         
         Parameters
         ----------
         start_token : str
-            開始トークンアドレス
+            Start token address
         max_depth : int, default 5
-            最大探索深度
+            Maximum search depth
             
         Returns
         -------
         List[Dict]
-            検出されたサイクルの詳細情報
+            Details of detected cycles
         """
         if self.graph is None:
             raise RuntimeError("Graph not built. Call build_graph_from_*() first.")
@@ -281,7 +281,7 @@ class ArbitragePathFinder:
         cycles = []
         
         try:
-            # DFSベースのサイクル検索（簡易実装）
+            # DFS-based cycle search (simple implementation)
             visited = set()
             path = []
             
@@ -290,7 +290,7 @@ class ArbitragePathFinder:
                     return
                     
                 if current_idx in path:
-                    # サイクル発見
+                    # Cycle found
                     cycle_start = path.index(current_idx)
                     cycle_indices = path[cycle_start:] + [current_idx]
                     cycle_info = self._analyze_cycle(cycle_indices)
@@ -300,7 +300,7 @@ class ArbitragePathFinder:
                 
                 path.append(current_idx)
                 
-                # 隣接ノードを探索
+                # Explore adjacent nodes
                 for neighbor in self.graph.neighbors(current_idx, mode="out"):
                     if neighbor not in visited or neighbor == start_idx:
                         dfs(neighbor, depth + 1)
@@ -321,19 +321,19 @@ class ArbitragePathFinder:
         min_profit_threshold: float = 0.0
     ) -> Optional[Dict]:
         """
-        サイクルの詳細分析を実行
+        Perform detailed analysis of the cycle
         
         Parameters
         ----------
         cycle_indices : List[int]
             サイクルのインデックスリスト
         min_profit_threshold : float
-            最小利益閾値
+            Minimum profit threshold
             
         Returns
         -------
         Optional[Dict]
-            サイクル分析結果（利益が閾値以下の場合はNone）
+            Cycle analysis result (None if below threshold)
         """
         if len(cycle_indices) < MIN_CYCLE_LENGTH:
             return None
@@ -341,7 +341,7 @@ class ArbitragePathFinder:
         total_weight = 0.0
         path_details = []
         
-        # サイクルの各エッジを分析
+        # Analyze each edge in the cycle
         for i in range(len(cycle_indices) - 1):
             from_idx = cycle_indices[i]
             to_idx = cycle_indices[i + 1]
@@ -365,7 +365,7 @@ class ArbitragePathFinder:
                 "fee_rate": edge_info["pool_data"].get("fee_rate")
             })
         
-        # 利益率計算（負の重み = 正の利益）
+        # Calculate profit rate (negative weight = positive profit)
         profit_rate = np.exp(-total_weight) - 1.0
         
         if profit_rate < min_profit_threshold:
@@ -385,23 +385,23 @@ class ArbitragePathFinder:
 
     def get_graph_stats(self) -> Dict[str, any]:
         """
-        グラフの統計情報を取得
+        Get graph statistics
 
         Returns
         -------
         Dict[str, Any]
-            グラフの統計情報
+            Graph statistics
         """
         if self.graph is None:
             return {"error": "Graph not built"}
 
-        # 基本情報
+        # Basic information
         num_vertices = self.graph.vcount()
         num_edges    = self.graph.ecount()
         sol_nodes    = sum(1 for is_sol in self.graph.vs["is_sol"] if is_sol)
         other_tokens = num_vertices - sol_nodes
 
-        # 連結性
+        # Connectivity
         is_weakly_conn = self.graph.is_connected(mode="weak")
         comps          = self.graph.components(mode="weak")
         comp_sizes     = comps.sizes()
@@ -409,17 +409,17 @@ class ArbitragePathFinder:
         largest_comp   = max(comp_sizes) if comp_sizes else 0
         smallest_comp  = min(comp_sizes) if comp_sizes else 0
 
-        # 密度
+        # Density
         density = self.graph.density()
 
-        # 次数分布
+        # Degree distribution
         indegrees = self.graph.indegree()
         outdegrees = self.graph.outdegree()
         degrees = [i + o for i, o in zip(indegrees, outdegrees)]
         max_deg = max(degrees) if degrees else 0
         min_deg = min(degrees) if degrees else 0
         avg_deg = sum(degrees) / len(degrees) if degrees else 0
-        # 中央値
+        # Median
         deg_sorted = sorted(degrees)
         mid = len(deg_sorted) // 2
         if len(deg_sorted) % 2 == 0:
@@ -427,7 +427,7 @@ class ArbitragePathFinder:
         else:
             median_deg = deg_sorted[mid]
 
-        # クラスタリング係数（グローバルトランジティビティ）
+        # Clustering coefficient (global transitivity)
         clustering = self.graph.transitivity_undirected()
 
         return {
@@ -451,9 +451,9 @@ class ArbitragePathFinder:
 
 
 
-# TEST用関数
+# Test helper function
 def test_arbitrage_finder():
-    """ArbitragePathFinderの動作テスト"""
+    """Test run for ArbitragePathFinder"""
     import asyncio
     from src.clients.raydium_client import RaydiumClient
     
@@ -476,5 +476,5 @@ def test_arbitrage_finder():
     return asyncio.run(run_test())
 
 
-# TEST用コマンド
+# Test command
 # python -c "import asyncio; from src.core.arbitrage_path_finder import test_arbitrage_finder; test_arbitrage_finder()"

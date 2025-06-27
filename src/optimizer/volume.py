@@ -4,7 +4,7 @@ from typing import List, Dict, Tuple
 
 
 def optimize_volume(path: List[str], pool_infos: Dict[Tuple[str,str], Dict]):
-    """とりあえず各プールの片側流動性を用いた単純最適化"""
+    """Simple optimization using one-side liquidity of each pool for now"""
     def revenue(x):
         prod = 1.0
         for i in range(len(path)-1):

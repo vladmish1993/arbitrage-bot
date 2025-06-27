@@ -1,12 +1,12 @@
 # src/clients/raydium_client.py
 """
-Raydium API クライアント
+Raydium API client
 
 -----------------------------
-目的:
-    - Raydium が管理する定数積型AMMの取引情報をAPIをもとに取得
-    - 例: https://api-v3.raydium.io/pools/info/list?poolType=standard&poolSortField=liquidity&sortType=desc&pageSize=500&page=1
-    - ベルマン・フォードアルゴリズム用のグラフデータ生成
+Purpose:
+    - Fetch constant-product AMM trade info managed by Raydium via API
+    - Example: https://api-v3.raydium.io/pools/info/list?poolType=standard&poolSortField=liquidity&sortType=desc&pageSize=500&page=1
+    - Generate graph data for the Bellman-Ford algorithm
 """
 
 import copy
@@ -19,47 +19,47 @@ import httpx
 
 from .base_dex_client import BaseDexClient, DEFAULT_TIMEOUT
 
-# Raydium固有の定数
+# Raydium specific constants
 POOL_URL = "https://api-v3.raydium.io/pools/info/list"
 
-# ロガー設定
+# Logger setup
 log = logging.getLogger(__name__)
 
 
 class RaydiumClient(BaseDexClient):
     """
-    Raydium APIから取得した情報を基に、アービトラージ用のグラフデータを生成するクライアント
+    Client that generates graph data for arbitrage based on information obtained from the Raydium API
     
-    BaseDexClientを継承し、Raydium固有の機能を実装
+    Inherits BaseDexClient and implements Raydium specific features
     """
 
     @property
     def dex_name(self) -> str:
-        """DEX名を返す"""
+        """Return DEX name"""
         return "Raydium"
 
     def _validate_pool_data(self, pool: Dict) -> bool:
         """
-        Raydium固有のプールデータ妥当性検証
+        Validate Raydium specific pool data
         
         Parameters
         ----------
         pool : Dict
-            プールデータ
+            Pool data
             
         Returns
         -------
         bool
-            妥当性検証結果
+            Validation result
         """
-        # Raydium固有の必須フィールド
+        # Raydium specific required fields
         required_fields = ["id", "mintA", "mintB", "price", "tvl", "feeRate", "mintAmountA", "mintAmountB"]
         
-        # 基底クラスの基本検証を実行
+        # Run base class validation
         if not super()._validate_pool_data(pool, required_fields):
             return False
         
-        # Raydium固有の流動性チェック
+        # Raydium specific liquidity check
         liquidity_a = float(pool.get("mintAmountA", 0))
         liquidity_b = float(pool.get("mintAmountB", 0))
         if not self._validate_liquidity(liquidity_a, liquidity_b, pool.get("id")):
@@ -76,26 +76,26 @@ class RaydiumClient(BaseDexClient):
         max_pages: int = 1,
     ) -> List[Tuple[str, str, float, Dict]]:
         """
-        Raydium API から取得したプール情報をすべてのページからフェッチし、
-        ベルマン・フォード用のエッジリストを返す。
+        Fetch pool information from all pages of the Raydium API and
+        return an edge list for Bellman-Ford.
 
         Parameters
         ----------
         poolType : str, default "standard"
-            プールタイプ
+            Pool type
         poolSortField : str, default "liquidity"
-            ソートフィールド
+            Sort field
         sortType : str, default "desc"
-            ソート順
+            Sort order
         pageSize : int, default 500
-            1ページあたりのプール数
+            Number of pools per page
         max_pages : int, default 5
-            最大何ページまで取得するか
+            Maximum number of pages to fetch
             
         Returns
         -------
         List[Tuple[str, str, float, Dict]]
-            エッジリスト: (from_token, to_token, weight, pool_info)
+            Edge list: (from_token, to_token, weight, pool_info)
         """
         edges: List[Tuple[str, str, float, Dict]] = []
         valid_pools = 0
@@ -118,7 +118,7 @@ class RaydiumClient(BaseDexClient):
                 pools_data = data.get("data", {}).get("data", [])
                 log.info("%s: page %d fetched %d pools", self.dex_name, page, len(pools_data))
 
-                # 取得プールがなければループ終了
+                # Break if no pools retrieved
                 if not pools_data:
                     break
 
@@ -127,7 +127,7 @@ class RaydiumClient(BaseDexClient):
                         continue
                     valid_pools += 1
 
-                    # 共通情報
+                    # Common information
                     token_a = pool["mintA"]
                     token_b = pool["mintB"]
                     a_addr = token_a["address"]
@@ -171,7 +171,7 @@ class RaydiumClient(BaseDexClient):
                         "symbol": token_a.get("symbol"),
                         "decimals": token_a.get("decimals"),
                     }
-                    # リザーブも入れ替え
+                    # Swap reserves as well
                     info_ba["liquidity_a"], info_ba["liquidity_b"] = (
                         info_ba["liquidity_b"],
                         info_ba["liquidity_a"],
@@ -200,21 +200,21 @@ class RaydiumClient(BaseDexClient):
         max_pages: int = 1,
     ) -> None:
         """
-        Raydium API から取得したプール情報を
-        全ページ分フェッチし、アービトラージ指標をログに出力。
+        Fetch pool information from the Raydium API and
+        fetch all pages to log arbitrage metrics.
 
         Parameters
         ----------
         poolType : str, default "standard"
-            プールタイプ
+            Pool type
         poolSortField : str, default "liquidity"
-            ソートフィールド
+            Sort field
         sortType : str, default "desc"
-            ソート順
+            Sort order
         pageSize : int, default 500
-            1ページあたりのプール数
+            Number of pools per page
         max_pages : int, default 1
-            最大何ページまで取得するか
+            Maximum number of pages to fetch
         """
 
         for page in range(1, max_pages + 1):
@@ -235,7 +235,7 @@ class RaydiumClient(BaseDexClient):
                 pools_data = data.get("data", {}).get("data", [])
                 log.info("%s: page %d fetched %d pools", self.dex_name, page, len(pools_data))
 
-                # プールがなければ以降ループ不要
+                # Stop looping if there are no pools
                 if not pools_data:
                     break
 
@@ -266,7 +266,7 @@ class RaydiumClient(BaseDexClient):
                         "daily_apr":         pool.get("day", {}).get("apr"),
                     })
 
-                # ログ出力
+                # Log output
                 log.info(
                     "%s arbitrage data (page %d/%d):\n%s",
                     self.dex_name,
@@ -286,12 +286,12 @@ class RaydiumClient(BaseDexClient):
                 break
 
 
-# 後方互換性のためのエイリアス
+# Alias for backward compatibility
 RaydiumClient.get_raydium_graph = RaydiumClient.get_graph
 RaydiumClient.print_raydium_pools = RaydiumClient.print_pools
 
-# TEST用コマンド（データ出力）
+# Test command (data output)
 # python -c "import asyncio; import logging; logging.basicConfig(level=logging.INFO); from src.clients.raydium_client import RaydiumClient; client = RaydiumClient(); asyncio.run(client.print_pools(pageSize=3))"
 
-# TEST用コマンド（グラフ作成）  
-# python -c "import asyncio; from src.clients.raydium_client import RaydiumClient; client = RaydiumClient(); edges = asyncio.run(client.get_graph(pageSize=5)); print(f'グラフ作成完了: {len(edges)}エッジ'); print('最初のエッジ例:', edges[0] if edges else 'None')"
+# Test command (graph creation)  
+# python -c "import asyncio; from src.clients.raydium_client import RaydiumClient; client = RaydiumClient(); edges = asyncio.run(client.get_graph(pageSize=5)); print(f'Graph built: {len(edges)} edges'); print('First edge example:', edges[0] if edges else 'None')"

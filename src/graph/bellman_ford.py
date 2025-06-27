@@ -1,7 +1,7 @@
 """
-ベルマン-フォードによる負閉路検出ユーティリティ
+Negative cycle detection utility using Bellman-Ford
   * bellman_ford_negative_cycles
-      - 最大 k 本まで検出してそれぞれ [v0,…,v0] を返す
+      - Detect up to k cycles and return each as [v0,...,v0]
 """
 
 from typing import List, Tuple
@@ -16,25 +16,25 @@ def bellman_ford_negative_cycles(
     Parameters
     ----------
     n : int
-        頂点数
+        number of vertices
     edges : [(u,v,w), ...]
-        有向辺集合
+        directed edge set
     max_cycles : int
-        検出本数上限
+        maximum number of cycles
     rel_eps : float
-        相対許容誤差
+        relative tolerance
 
     Returns
     -------
-    List of cycles (各サイクルは頂点 ID のリスト [v0,...,v0])
+    List of cycles (each cycle is a list of vertex IDs [v0,...,v0])
     """
-    # ---------- ① 全頂点に到達させるためダミー源点を張る ----------
-    dist   = [0.0] * (n + 1)          # 最後の頂点 n がダミー
+    # ---------- 1. Add dummy source to reach all vertices ----------
+    dist   = [0.0] * (n + 1)          # The last vertex n is a dummy
     parent = [-1]  * (n + 1)
 
     ext_edges = edges + [(n, v, 0.0) for v in range(n)]
 
-    # ---------- ② |V|-1 回緩和 ----------
+    # ---------- 2. Relax |V|-1 times ----------
     for _ in range(n):
         updated = False
         for u, v, w in ext_edges:
@@ -45,17 +45,17 @@ def bellman_ford_negative_cycles(
         if not updated:
             break
 
-    # ---------- ③ 追加 1 回で更新される頂点は負閉路へ到達 ----------
+    # ---------- 3. Vertices updated in one more pass are in a negative cycle ----------
     cycles = []
-    found = set()                     # 閉路に含まれる頂点の集合（重複排除）
+    found = set()                     # Set of vertices in cycles (to avoid duplicates)
     for u, v, w in ext_edges:
         if dist[u] + w < dist[v] - rel_eps * max(1.0, abs(dist[u])):
-            # v から n 回親をたどると必ず閉路内
+            # following parent n times from v guarantees a vertex in a cycle
             x = v
             for _ in range(n):
                 x = parent[x]
 
-            if x in found:            # 既に回収済みの閉路
+            if x in found:            # Cycle already collected
                 continue
 
             cycle = [x]
@@ -66,7 +66,7 @@ def bellman_ford_negative_cycles(
             cycle.append(x)
             cycle.reverse()
 
-            # 長さ 2 は自己ループまたは双方向エッジなのでスキップ
+            # Skip length 2 cycles since they are self-loops or two-way edges
             if len(cycle) > 3:
                 cycles.append(cycle)
                 found.update(cycle)
